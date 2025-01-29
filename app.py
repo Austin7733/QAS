@@ -7,7 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/11ZBvPkDQOfPb7tbZeIwd9W6d1ZH3zIzT
 """
 
-!pip install swifter
 import pandas as pd
 import swifter
 import pandas as pd
