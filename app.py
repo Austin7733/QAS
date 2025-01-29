@@ -8,6 +8,9 @@ import nltk
 
 nltk.download('punkt')
 
+st.title("Machine Learning QA System")
+st.markdown("Tanyakan tentang topik Machine Learning!")
+
 # Load pre-trained QA pipeline
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
 
