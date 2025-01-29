@@ -6,7 +6,7 @@ from transformers import pipeline
 import streamlit as st
 import nltk
 
-nltk.download('punkt_tab')
+nltk.download('punkt')
 
 # Load pre-trained QA pipeline
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
@@ -15,6 +15,11 @@ qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distil
 uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
+
+    # Pastikan CSV memiliki kolom 'abstract'
+    if "abstract" not in df.columns:
+        st.error("File CSV harus memiliki kolom 'abstract'!")
+        st.stop()
 
     # Preprocessing function
     def preprocess_text(text):
@@ -42,7 +47,8 @@ if uploaded_file:
     df['chunks'] = df['abstract'].apply(split_into_chunks)
 
     # Create sentence embeddings
-    embeddings = np.array([model.encode(chunk) for chunk in df['chunks'].explode()])
+    chunks_exploded = df['chunks'].explode().dropna().tolist()
+    embeddings = np.array([model.encode(chunk) for chunk in chunks_exploded])
 
     # Create FAISS index
     index = faiss.IndexFlatL2(embeddings.shape[1])
@@ -52,7 +58,8 @@ if uploaded_file:
     def query_faiss(question, top_k=5):
         question_embedding = model.encode(question)
         distances, indices = index.search(np.array([question_embedding]), top_k)
-        return [{"title": df.iloc[idx]["title"], "chunk": df.iloc[idx]["chunks"], "chunk_id": df.iloc[idx]["id"]} for idx in indices[0]]
+        df_reset = df.reset_index()
+        return [{"title": df_reset.loc[idx, "title"], "chunk": df_reset.loc[idx, "chunks"], "chunk_id": df_reset.loc[idx, "index"]} for idx in indices[0]]
 
     # Function to answer question using the QA model
     def get_answer(question, context):
