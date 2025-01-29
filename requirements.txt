@@ -6,4 +6,3 @@ numpy==1.21.2
 pandas==2.2.2
 tqdm==4.67.1
 ntlk==3.9.1
-swifter
