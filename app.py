@@ -1,80 +1,69 @@
-import os
+
+import pandas as pd
 import faiss
 import numpy as np
-import pandas as pd
-import streamlit as st
-import nltk
-from concurrent.futures import ProcessPoolExecutor
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
+import streamlit as st
+import nltk
 
-# Download tokenizer
-nltk.download('punkt')
+nltk.download('punkt_tab')
 
-# Streamlit App Title
-st.title("Machine Learning QA System")
-st.markdown("### Tanyakan tentang topik Machine Learning!")
-
-# Load pre-trained QA model
+# Load pre-trained QA pipeline
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
 
-# Load embedding model
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Upload CSV
+# Load data (use Streamlit's uploader for CSV file)
 uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
-
 if uploaded_file:
-    # Membaca CSV dengan Optimasi**
-    df = pd.read_csv(uploaded_file, dtype={"id": str}, low_memory=False).fillna("")
+    df = pd.read_csv(uploaded_file)
 
-    # Preprocessing Cepat**
-    df['abstract'] = df['abstract'].str.replace(r'[\n\r]', ' ', regex=True).str.strip()
+    # Preprocessing function
+    def preprocess_text(text):
+        return text.replace('\n', ' ').replace('\r', '').strip()
 
-    # Fungsi Chunking yang Lebih Cepat**
-    def fast_chunking(text, chunk_size=512):
-        words = text.split()
-        return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
-    
-    df['chunks'] = df['abstract'].apply(fast_chunking)
+    df['abstract'] = df['abstract'].apply(preprocess_text)
 
-    # Menghasilkan Embedding Secara Paralel**
-    def encode_batch(batch):
-        return embedding_model.encode(batch, convert_to_numpy=True, batch_size=64)
+    # Define chunking and embedding model
+    model = SentenceTransformer('all-MiniLM-L6-v2')
 
-    batch_size = 64
-    data_batches = np.array_split(df['chunks'].explode().tolist(), len(df) // batch_size)
-    embeddings = []
+    def split_into_chunks(text, chunk_size=512):
+        sentences = nltk.sent_tokenize(text)
+        chunks = []
+        current_chunk = ""
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) <= chunk_size:
+                current_chunk += " " + sentence
+            else:
+                chunks.append(current_chunk.strip())
+                current_chunk = sentence
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        return chunks
 
-    with ProcessPoolExecutor() as executor:
-        results = list(executor.map(encode_batch, data_batches))
+    df['chunks'] = df['abstract'].apply(split_into_chunks)
 
-    embeddings = np.vstack(results)
+    # Create sentence embeddings
+    embeddings = np.array([model.encode(chunk) for chunk in df['chunks'].explode()])
 
-    # Simpan dan Load FAISS Index**
-    index_file = "faiss_index.bin"
-    
-    if os.path.exists(index_file):
-        index = faiss.read_index(index_file)
-        st.write("📥 FAISS Index Loaded from Cache")
-    else:
-        index = faiss.IndexFlatL2(embeddings.shape[1])
-        index.add(embeddings)
-        faiss.write_index(index, index_file)
-        st.write("📤 FAISS Index Created and Saved")
+    # Create FAISS index
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(embeddings)
 
-    # Query FAISS**
+    # Function to query FAISS
     def query_faiss(question, top_k=5):
-        question_embedding = embedding_model.encode(question)
+        question_embedding = model.encode(question)
         distances, indices = index.search(np.array([question_embedding]), top_k)
-        return [{"title": df.iloc[idx]["title"], "chunk": df.iloc[idx]["chunks"]} for idx in indices[0]]
+        return [{"title": df.iloc[idx]["title"], "chunk": df.iloc[idx]["chunks"], "chunk_id": df.iloc[idx]["id"]} for idx in indices[0]]
 
-    # Fungsi Menjawab Pertanyaan**
+    # Function to answer question using the QA model
     def get_answer(question, context):
         result = qa_pipeline({"question": question, "context": context})
         return result["answer"]
 
-    # Streamlit UI
+    # Streamlit interface
+    st.title("Machine Learning QA System")
+    st.markdown("### Tanyakan tentang topik Machine Learning!")
+
     context = st.text_area("Masukkan konteks artikel Machine Learning:", "")
     question = st.text_input("Masukkan pertanyaan Anda:", "")
 
