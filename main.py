@@ -10,7 +10,7 @@ import uvicorn
 from typing import List
 
 # Download NLTK tokenizer
-nltk.download("punkt")
+nltk.download("punkt_tab")
 
 app = FastAPI()
 
