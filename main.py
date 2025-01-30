@@ -6,6 +6,7 @@ from sentence_transformers import SentenceTransformer
 from transformers import pipeline, AutoTokenizer
 import streamlit as st
 from joblib import Parallel, delayed
+from io import StringIO
 
 # ========== LOAD MODELS ==========
 embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")  
@@ -64,16 +65,21 @@ uploaded_file = st.file_uploader("Silahkan upload file CSV!", type=["csv"])
 if uploaded_file:
     st.info("Memproses file, harap tunggu...")
     
-    df = pd.read_csv(uploaded_file, low_memory=False)  # Menggunakan Pandas untuk membaca file
-    df_chunks = preprocess_and_split_text(df)
-    
-    index = load_faiss_index()
-    if index is None:
-        df_chunks, index = create_faiss_index(df_chunks)
-    
-    st.success("File berhasil di-upload dan diproses!")
-    st.session_state.df_chunks = df_chunks
-    st.session_state.index = index
+    # Menangani upload CSV
+    try:
+        df = pd.read_csv(uploaded_file, low_memory=False)  # Menggunakan Pandas untuk membaca file
+        df_chunks = preprocess_and_split_text(df)
+        
+        # Load or create FAISS index
+        index = load_faiss_index()
+        if index is None:
+            df_chunks, index = create_faiss_index(df_chunks)
+        
+        st.success("File berhasil di-upload dan diproses!")
+        st.session_state.df_chunks = df_chunks
+        st.session_state.index = index
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat memproses file: {e}")
 
 # ========== PENCARIAN ==========
 def search(question: str, top_k: int = 5):
