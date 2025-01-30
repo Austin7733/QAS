@@ -1,91 +1,58 @@
 import os
 import pandas as pd
-import faiss
 import numpy as np
+import faiss
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
-import nltk
 import streamlit as st
-from typing import List
+import nltk
 
 # Download NLTK tokenizer
-nltk.download("punkt_tab")
+nltk.download("punkt")
 
-# Load pre-trained models
+# Model dan pipeline
+embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")  # Model lebih cepat
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Global variables for FAISS index and dataframe
-df_chunks = None
-index = None
+# Fungsi untuk memproses dan membagi teks
+def preprocess_and_split_text(df):
+    df["abstract"] = df["abstract"].str.replace('\n', ' ').str.replace('\r', '').str.strip()
+    df["chunks"] = df["abstract"].apply(lambda x: nltk.sent_tokenize(x))
+    return df
 
-# Function to upload and process CSV files
-def upload_files():
-    global df_chunks, index
+# Fungsi untuk membuat embeddings dan index FAISS
+def create_faiss_index(df_chunks):
+    all_chunks = []
+    for _, row in df_chunks.iterrows():
+        for chunk in row["chunks"]:
+            all_chunks.append({"title": row["title"], "chunk": chunk})
+
+    df_chunks = pd.DataFrame(all_chunks)
+    embeddings = np.array([embedding_model.encode(chunk) for chunk in df_chunks["chunk"]])
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(embeddings)
+    return df_chunks, index
+
+# Streamlit interface
+st.title("Question Answering with Uploaded CSV")
+
+uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"], accept_multiple_files=False)
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    df_chunks = preprocess_and_split_text(df)
+    df_chunks, index = create_faiss_index(df_chunks)
     
-    uploaded_files = st.file_uploader("Upload CSV files", type=["csv"], accept_multiple_files=True)
-    
-    if uploaded_files:
-        all_chunks = []
-        
-        for file in uploaded_files:
-            df = pd.read_csv(file)
-            
-            # Preprocessing text
-            def preprocess_text(text):
-                return text.replace('\n', ' ').replace('\r', '').strip()
-            
-            df["abstract"] = df["abstract"].apply(preprocess_text)
-            
-            # Splitting text into chunks
-            def split_into_chunks(text, chunk_size=512):
-                sentences = nltk.sent_tokenize(text)
-                chunks = []
-                current_chunk = ""
-                for sentence in sentences:
-                    if len(current_chunk) + len(sentence) <= chunk_size:
-                        current_chunk += " " + sentence
-                    else:
-                        chunks.append(current_chunk.strip())
-                        current_chunk = sentence
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                return chunks
-            
-            df["chunks"] = df["abstract"].apply(split_into_chunks)
-            
-            # Storing chunks into a list
-            for _, row in df.iterrows():
-                for chunk in row["chunks"]:
-                    all_chunks.append({"title": row["title"], "chunk": chunk})
-        
-        # Creating dataframe for all text chunks
-        df_chunks = pd.DataFrame(all_chunks)
-        
-        # Convert text to embeddings
-        embeddings = np.array([embedding_model.encode(chunk) for chunk in df_chunks["chunk"]])
-        
-        # Create FAISS index
-        index = faiss.IndexFlatL2(embeddings.shape[1])
-        index.add(embeddings)
-        
-        st.success(f"{len(uploaded_files)} files uploaded and processed successfully")
+    st.success("File uploaded and processed successfully!")
 
-# Function to search for relevant chunks based on the question
+# Fungsi pencarian berdasarkan pertanyaan
 def search(question: str, top_k: int = 5):
-    global df_chunks, index
-    
-    if df_chunks is None or index is None:
-        st.error("No data available. Please upload files first.")
-        return
-    
-    # Encode the question into embeddings
+    if 'df_chunks' not in globals() or 'index' not in globals():
+        st.error("No data available. Please upload a file first.")
+        return []
+
     question_embedding = embedding_model.encode(question)
-    
-    # Perform FAISS search
     distances, indices = index.search(np.array([question_embedding]), top_k)
-    
-    # Get the search results
+
     results = []
     for idx in indices[0]:
         result = {
@@ -93,56 +60,24 @@ def search(question: str, top_k: int = 5):
             "chunk": df_chunks.iloc[idx]["chunk"]
         }
         results.append(result)
-    
     return results
 
-# Function to get an answer from the most relevant text chunks
+# Fungsi untuk mendapatkan jawaban
 def get_answer(question: str):
-    global df_chunks, index
+    if 'df_chunks' not in globals() or 'index' not in globals():
+        st.error("No data available. Please upload a file first.")
+        return {}
+
+    results = search(question, top_k=3)
+    selected_chunks = " ".join([result["chunk"] for result in results])
     
-    if df_chunks is None or index is None:
-        st.error("No data available. Please upload files first.")
-        return
-    
-    # Encode the question into embeddings
-    question_embedding = embedding_model.encode(question)
-    
-    # Perform FAISS search to find the best matching text chunks
-    distances, indices = index.search(np.array([question_embedding]), 3)
-    
-    # Combine the relevant text chunks
-    selected_chunks = " ".join(df_chunks.iloc[idx]["chunk"] for idx in indices[0])
-    
-    # Use the QA model to answer the question
     result = qa_pipeline({"question": question, "context": selected_chunks})
-    
-    return {
-        "answer": result["answer"],
-        "context_used": selected_chunks
-    }
+    return {"answer": result["answer"], "context_used": selected_chunks}
 
-# Streamlit App UI
-st.title("Question Answering with CSV Data")
-
-# Upload files section
-upload_files()
-
-# Input for asking a question
+# Form untuk input pertanyaan
 question = st.text_input("Ask a question:")
-
 if question:
-    # Perform search and display results
-    results = search(question)
-    if results:
-        st.subheader("Relevant Chunks:")
-        for result in results:
-            st.write(f"**Title:** {result['title']}")
-            st.write(f"**Chunk:** {result['chunk'][:500]}...")  # Display the first 500 characters of the chunk
-
-        # Get the answer to the question
-        answer = get_answer(question)
-        if answer:
-            st.subheader("Answer:")
-            st.write(answer["answer"])
-            st.subheader("Context Used for Answer:")
-            st.write(answer["context_used"][:500])  # Display the first 500 characters of context
+    answer = get_answer(question)
+    if answer:
+        st.write(f"Answer: {answer['answer']}")
+        st.write(f"Context used: {answer['context_used']}")
