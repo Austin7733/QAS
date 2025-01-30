@@ -5,8 +5,7 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline, AutoTokenizer
 import streamlit as st
-from joblib import Parallel, delayed
-import nltk  # Pastikan untuk mengimpor nltk
+import nltk
 
 # Unduh data yang dibutuhkan oleh nltk
 nltk.download('punkt')
@@ -26,10 +25,10 @@ def preprocess_and_split_text(df):
     return df
 
 def batch_encode(chunks, batch_size=64):
-    def encode_batch(batch):
-        return embedding_model.encode(batch, show_progress_bar=False)
-    
-    embeddings = Parallel(n_jobs=-1)(delayed(encode_batch)(chunks[i:i + batch_size]) for i in range(0, len(chunks), batch_size))
+    embeddings = []
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        embeddings.append(embedding_model.encode(batch, show_progress_bar=False))
     return np.vstack(embeddings)
 
 # ========== FAISS INDEX HANDLING ========== 
@@ -69,23 +68,16 @@ if uploaded_file:
 
     # Memproses file CSV dalam potongan kecil (chunks)
     try:
-        df_iterator = pd.read_csv(uploaded_file, chunksize=1000)  # Membaca CSV dalam batch kecil
-
-        # Memproses setiap chunk secara bertahap
-        all_chunks = []
-        for chunk in df_iterator:
-            df_chunk = preprocess_and_split_text(chunk)
-            all_chunks.append(df_chunk)
-
-        df_chunks = pd.concat(all_chunks, ignore_index=True)
+        df = pd.read_csv(uploaded_file)
+        df = preprocess_and_split_text(df)
         
         # Load or create FAISS index
         index = load_faiss_index()
         if index is None:
-            df_chunks, index = create_faiss_index(df_chunks)
+            df_chunks, index = create_faiss_index(df)
         
         st.success("File berhasil di-upload dan diproses!")
-        st.session_state.df_chunks = df_chunks
+        st.session_state.df_chunks = df
         st.session_state.index = index
     except Exception as e:
         st.error(f"Terjadi kesalahan saat memproses file: {e}")
