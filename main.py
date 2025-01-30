@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 import numpy as np
 import faiss
@@ -6,21 +5,15 @@ from sentence_transformers import SentenceTransformer
 from transformers import pipeline, AutoTokenizer
 import streamlit as st
 from joblib import Parallel, delayed
-from nltk.tokenize import word_tokenize
-import nltk
 
-# Download data tokenisasi NLTK
-nltk.download('punkt')
-
-# ========== LOAD MODELS ==========
+# ========== LOAD MODELS ========== 
 embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")  
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
+tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
-# ========== FUNGSI PEMROSESAN ==========
-
-# Fungsi tokenisasi menggunakan NLTK
+# ========== FUNGSI PEMROSESAN ========== 
 def tokenize_sentences(text):
-    return word_tokenize(text)
+    return tokenizer.tokenize(text)
 
 def preprocess_and_split_text(df):
     df["abstract"] = df["abstract"].astype(str).str.replace('\n', ' ').str.replace('\r', '').str.strip()
@@ -34,11 +27,9 @@ def batch_encode(chunks, batch_size=64):
     embeddings = Parallel(n_jobs=-1)(delayed(encode_batch)(chunks[i:i + batch_size]) for i in range(0, len(chunks), batch_size))
     return np.vstack(embeddings)
 
-# ========== FAISS INDEX HANDLING ==========
-
+# ========== FAISS INDEX HANDLING ========== 
 FAISS_INDEX_PATH = "faiss.index"
 
-@st.cache_resource
 def load_faiss_index():
     if os.path.exists(FAISS_INDEX_PATH):
         return faiss.read_index(FAISS_INDEX_PATH)
@@ -63,19 +54,25 @@ def create_faiss_index(df_chunks):
     faiss.write_index(index, FAISS_INDEX_PATH)
     return df_chunks, index
 
-# ========== STREAMLIT INTERFACE ==========
-
+# ========== STREAMLIT INTERFACE ========== 
 st.title("Apa yang ingin Anda ketahui tentang Machine Learning?")
 
 uploaded_file = st.file_uploader("Silahkan upload file CSV!", type=["csv"])
 
 if uploaded_file:
     st.info("Memproses file, harap tunggu...")
-    
-    # Menangani upload CSV
+
+    # Memproses file CSV dalam potongan kecil (chunks)
     try:
-        df = pd.read_csv(uploaded_file, low_memory=False)  # Menggunakan Pandas untuk membaca file
-        df_chunks = preprocess_and_split_text(df)
+        df_iterator = pd.read_csv(uploaded_file, chunksize=1000)  # Membaca CSV dalam batch kecil
+
+        # Memproses setiap chunk secara bertahap
+        all_chunks = []
+        for chunk in df_iterator:
+            df_chunk = preprocess_and_split_text(chunk)
+            all_chunks.append(df_chunk)
+
+        df_chunks = pd.concat(all_chunks, ignore_index=True)
         
         # Load or create FAISS index
         index = load_faiss_index()
@@ -88,8 +85,7 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Terjadi kesalahan saat memproses file: {e}")
 
-# ========== PENCARIAN ==========
-
+# ========== PENCARIAN ========== 
 def search(question: str, top_k: int = 5):
     if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
         st.error("Silahkan upload file CSV dahulu!")
@@ -116,8 +112,7 @@ def get_answer(question: str):
     result = qa_pipeline({"question": question, "context": selected_chunks})
     return {"answer": result["answer"], "context_used": selected_chunks}
 
-# ========== FORM INPUT ==========
-
+# ========== FORM INPUT ========== 
 question = st.text_input("Tanyakan:")
 if question:
     answer = get_answer(question)
