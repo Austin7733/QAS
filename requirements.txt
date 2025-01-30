@@ -1,7 +1,8 @@
-streamlit
-pandas
 numpy
+pandas
 faiss-cpu
 sentence-transformers
 transformers
+streamlit
 nltk
+torch
