@@ -3,82 +3,133 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
-import streamlit as st
+from fastapi import FastAPI, UploadFile, File, HTTPException
 import nltk
+import uvicorn
+from typing import List
 
-nltk.download('punkt')
+nltk.download("punkt")
 
-st.title("Machine Learning QA System")
-st.markdown("Tanyakan tentang topik Machine Learning!")
+app = FastAPI()
 
-# Load pre-trained QA pipeline
+# Load pre-trained models
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load data (use Streamlit's uploader for CSV file)
-uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+# Global variables for FAISS index and dataframe
+df_chunks = None
+index = None
 
-    # Pastikan CSV memiliki kolom 'abstract'
-    if "abstract" not in df.columns:
-        st.error("File CSV harus memiliki kolom 'abstract'!")
-        st.stop()
+@app.post("/upload/")
+async def upload_file(file: UploadFile = File(...)):
+    global df_chunks, index
+    try:
+        df = pd.read_csv(file.file)
 
-    # Preprocessing function
-    def preprocess_text(text):
-        return text.replace('\n', ' ').replace('\r', '').strip()
+        # Preprocessing function
+        def preprocess_text(text):
+            return text.replace('\n', ' ').replace('\r', '').strip()
 
-    df['abstract'] = df['abstract'].apply(preprocess_text)
-
-    # Define chunking and embedding model
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-
-    def split_into_chunks(text, chunk_size=512):
-        sentences = nltk.sent_tokenize(text)
-        chunks = []
-        current_chunk = ""
-        for sentence in sentences:
-            if len(current_chunk) + len(sentence) <= chunk_size:
-                current_chunk += " " + sentence
-            else:
+        df["abstract"] = df["abstract"].apply(preprocess_text)
+        
+        # Function to split text into chunks
+        def split_into_chunks(text, chunk_size=512):
+            sentences = nltk.sent_tokenize(text)
+            chunks = []
+            current_chunk = ""
+            for sentence in sentences:
+                if len(current_chunk) + len(sentence) <= chunk_size:
+                    current_chunk += " " + sentence
+                else:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = sentence
+            if current_chunk:
                 chunks.append(current_chunk.strip())
-                current_chunk = sentence
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        return chunks
+            return chunks
+        
+        df["chunks"] = df["abstract"].apply(split_into_chunks)
+        
+        # Create dataframe for chunks
+        chunks_list = []
+        for idx, row in df.iterrows():
+            for chunk in row["chunks"]:
+                chunks_list.append({"title": row["title"], "chunk": chunk})
 
-    df['chunks'] = df['abstract'].apply(split_into_chunks)
+        df_chunks = pd.DataFrame(chunks_list)
 
-    # Create sentence embeddings
-    chunks_exploded = df['chunks'].explode().dropna().tolist()
-    embeddings = np.array([model.encode(chunk) for chunk in chunks_exploded])
+        # Create sentence embeddings
+        embeddings = np.array([embedding_model.encode(chunk) for chunk in df_chunks["chunk"]])
+        
+        # Create FAISS index
+        index = faiss.IndexFlatL2(embeddings.shape[1])
+        index.add(embeddings)
+        
+        return {"message": "File uploaded and processed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Create FAISS index
-    index = faiss.IndexFlatL2(embeddings.shape[1])
-    index.add(embeddings)
+@app.get("/search/")
+def search(question: str, top_k: int = 5):
+    global df_chunks, index
+    if df_chunks is None or index is None:
+        raise HTTPException(status_code=400, detail="No data available. Please upload a CSV file first.")
+    
+    # Convert question to embedding
+    question_embedding = embedding_model.encode(question)
+    distances, indices = index.search(np.array([question_embedding]), top_k)
+    
+    results = []
+    for idx in indices[0]:
+        result = {
+            "title": df_chunks.iloc[idx]["title"],
+            "chunk": df_chunks.iloc[idx]["chunk"]
+        }
+        results.append(result)
+    
+    return results
 
-    # Function to query FAISS
-    def query_faiss(question, top_k=5):
-        question_embedding = model.encode(question)
-        distances, indices = index.search(np.array([question_embedding]), top_k)
-        df_reset = df.reset_index()
-        return [{"title": df_reset.loc[idx, "title"], "chunk": df_reset.loc[idx, "chunks"], "chunk_id": df_reset.loc[idx, "index"]} for idx in indices[0]]
+@app.get("/answer/")
+def get_answer(question: str):
+    global df_chunks, index
+    if df_chunks is None or index is None:
+        raise HTTPException(status_code=400, detail="No data available. Please upload a CSV file first.")
 
-    # Function to answer question using the QA model
-    def get_answer(question, context):
-        result = qa_pipeline({"question": question, "context": context})
-        return result["answer"]
+    # Embedding pertanyaan
+    question_embedding = embedding_model.encode(question)
+    distances, indices = index.search(np.array([question_embedding]), 3)  # Ambil 3 top context
 
-    # Streamlit interface
-    st.title("Machine Learning QA System")
-    st.markdown("### Tanyakan tentang topik Machine Learning!")
+    # Gabungkan context terbaik
+    selected_chunks = " ".join(df_chunks.iloc[idx]["chunk"] for idx in indices[0])
 
-    context = st.text_area("Masukkan konteks artikel Machine Learning:", "")
-    question = st.text_input("Masukkan pertanyaan Anda:", "")
+    # Berikan ke QA model
+    result = qa_pipeline({"question": question, "context": selected_chunks})
 
-    if st.button("Cari Jawaban"):
-        if context and question:
-            answer = get_answer(question, context)
-            st.write(f"**Jawaban:** {answer}")
-        else:
-            st.write("Masukkan konteks dan pertanyaan terlebih dahulu!")
+    return {
+        "answer": result["answer"],
+        "context_used": selected_chunks
+    }
+
+@app.post("/evaluate/")
+def evaluate_model(questions: List[str]):
+    global df_chunks, index
+    if df_chunks is None or index is None:
+        raise HTTPException(status_code=400, detail="No data available. Please upload a CSV file first.")
+
+    results = []
+    for question in questions:
+        question_embedding = embedding_model.encode(question)
+        distances, indices = index.search(np.array([question_embedding]), 3)
+        
+        selected_chunks = " ".join(df_chunks.iloc[idx]["chunk"] for idx in indices[0])
+        result = qa_pipeline({"question": question, "context": selected_chunks})
+
+        results.append({
+            "question": question,
+            "answer": result["answer"],
+            "context_used": selected_chunks
+        })
+
+    return results
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
