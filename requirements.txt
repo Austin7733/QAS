@@ -1,7 +1,6 @@
 streamlit
 pandas
 numpy
-dask
 faiss-cpu
 sentence-transformers
 transformers
