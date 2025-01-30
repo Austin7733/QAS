@@ -7,3 +7,4 @@ nltk
 sentence-transformers
 transformers
 torch
+python-multipart
