@@ -6,16 +6,21 @@ from sentence_transformers import SentenceTransformer
 from transformers import pipeline, AutoTokenizer
 import streamlit as st
 from joblib import Parallel, delayed
-from io import StringIO
+from nltk.tokenize import word_tokenize
+import nltk
+
+# Download data tokenisasi NLTK
+nltk.download('punkt')
 
 # ========== LOAD MODELS ==========
 embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")  
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
-tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
 # ========== FUNGSI PEMROSESAN ==========
+
+# Fungsi tokenisasi menggunakan NLTK
 def tokenize_sentences(text):
-    return tokenizer.tokenize(text)
+    return word_tokenize(text)
 
 def preprocess_and_split_text(df):
     df["abstract"] = df["abstract"].astype(str).str.replace('\n', ' ').str.replace('\r', '').str.strip()
@@ -30,6 +35,7 @@ def batch_encode(chunks, batch_size=64):
     return np.vstack(embeddings)
 
 # ========== FAISS INDEX HANDLING ==========
+
 FAISS_INDEX_PATH = "faiss.index"
 
 @st.cache_resource
@@ -58,6 +64,7 @@ def create_faiss_index(df_chunks):
     return df_chunks, index
 
 # ========== STREAMLIT INTERFACE ==========
+
 st.title("Apa yang ingin Anda ketahui tentang Machine Learning?")
 
 uploaded_file = st.file_uploader("Silahkan upload file CSV!", type=["csv"])
@@ -82,6 +89,7 @@ if uploaded_file:
         st.error(f"Terjadi kesalahan saat memproses file: {e}")
 
 # ========== PENCARIAN ==========
+
 def search(question: str, top_k: int = 5):
     if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
         st.error("Silahkan upload file CSV dahulu!")
@@ -109,6 +117,7 @@ def get_answer(question: str):
     return {"answer": result["answer"], "context_used": selected_chunks}
 
 # ========== FORM INPUT ==========
+
 question = st.text_input("Tanyakan:")
 if question:
     answer = get_answer(question)
