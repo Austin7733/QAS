@@ -7,6 +7,8 @@ from transformers import pipeline
 import streamlit as st
 import nltk
 
+st.tilte("Selamat datang. Apa yang ingin ketahui tentang Machine Learning?")
+
 # Download NLTK tokenizer
 nltk.download("punkt")
 
