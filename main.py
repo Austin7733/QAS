@@ -4,45 +4,40 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
-from fastapi import FastAPI, UploadFile, File, HTTPException
 import nltk
-import uvicorn
+import streamlit as st
 from typing import List
 
 # Download NLTK tokenizer
-nltk.download("punkt")
-
-# Inisialisasi FastAPI app
-app = FastAPI()
+nltk.download("punkt_tab")
 
 # Load pre-trained models
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Global variables untuk FAISS index dan dataframe
+# Global variables for FAISS index and dataframe
 df_chunks = None
 index = None
 
-@app.post("/upload/")
-async def upload_files(files: List[UploadFile] = File(...)):
-    """Mengunggah dan memproses file CSV untuk indexing dengan FAISS"""
+# Function to upload and process CSV files
+def upload_files():
     global df_chunks, index
-    try:
-        if len(files) > 5:
-            raise HTTPException(status_code=400, detail="Maximum 5 files allowed.")
-        
+    
+    uploaded_files = st.file_uploader("Upload CSV files", type=["csv"], accept_multiple_files=True)
+    
+    if uploaded_files:
         all_chunks = []
         
-        for file in files:
-            df = pd.read_csv(file.file)
+        for file in uploaded_files:
+            df = pd.read_csv(file)
             
-            # Preprocessing teks
+            # Preprocessing text
             def preprocess_text(text):
                 return text.replace('\n', ' ').replace('\r', '').strip()
             
             df["abstract"] = df["abstract"].apply(preprocess_text)
             
-            # Membagi teks abstrak menjadi potongan (chunks)
+            # Splitting text into chunks
             def split_into_chunks(text, chunk_size=512):
                 sentences = nltk.sent_tokenize(text)
                 chunks = []
@@ -59,40 +54,38 @@ async def upload_files(files: List[UploadFile] = File(...)):
             
             df["chunks"] = df["abstract"].apply(split_into_chunks)
             
-            # Menyimpan potongan teks ke dalam list
+            # Storing chunks into a list
             for _, row in df.iterrows():
                 for chunk in row["chunks"]:
                     all_chunks.append({"title": row["title"], "chunk": chunk})
         
-        # Membuat dataframe untuk semua potongan teks
+        # Creating dataframe for all text chunks
         df_chunks = pd.DataFrame(all_chunks)
         
-        # Mengubah teks menjadi vektor embeddings
+        # Convert text to embeddings
         embeddings = np.array([embedding_model.encode(chunk) for chunk in df_chunks["chunk"]])
         
-        # Membuat FAISS index
+        # Create FAISS index
         index = faiss.IndexFlatL2(embeddings.shape[1])
         index.add(embeddings)
         
-        return {"message": f"{len(files)} files uploaded and processed successfully"}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        st.success(f"{len(uploaded_files)} files uploaded and processed successfully")
 
-@app.get("/search/")
+# Function to search for relevant chunks based on the question
 def search(question: str, top_k: int = 5):
-    """Mencari potongan teks yang paling relevan berdasarkan query pengguna"""
     global df_chunks, index
-    if df_chunks is None or index is None:
-        raise HTTPException(status_code=400, detail="No data available. Please upload files first.")
     
-    # Encode pertanyaan ke dalam vektor
+    if df_chunks is None or index is None:
+        st.error("No data available. Please upload files first.")
+        return
+    
+    # Encode the question into embeddings
     question_embedding = embedding_model.encode(question)
     
-    # Melakukan pencarian FAISS
+    # Perform FAISS search
     distances, indices = index.search(np.array([question_embedding]), top_k)
     
-    # Mengambil hasil pencarian
+    # Get the search results
     results = []
     for idx in indices[0]:
         result = {
@@ -103,23 +96,24 @@ def search(question: str, top_k: int = 5):
     
     return results
 
-@app.get("/answer/")
+# Function to get an answer from the most relevant text chunks
 def get_answer(question: str):
-    """Menjawab pertanyaan dengan model QA berdasarkan teks yang paling relevan"""
     global df_chunks, index
-    if df_chunks is None or index is None:
-        raise HTTPException(status_code=400, detail="No data available. Please upload files first.")
     
-    # Encode pertanyaan ke dalam vektor
+    if df_chunks is None or index is None:
+        st.error("No data available. Please upload files first.")
+        return
+    
+    # Encode the question into embeddings
     question_embedding = embedding_model.encode(question)
     
-    # Melakukan pencarian FAISS untuk menemukan potongan teks terbaik
+    # Perform FAISS search to find the best matching text chunks
     distances, indices = index.search(np.array([question_embedding]), 3)
     
-    # Menggabungkan teks dari hasil pencarian
+    # Combine the relevant text chunks
     selected_chunks = " ".join(df_chunks.iloc[idx]["chunk"] for idx in indices[0])
     
-    # Menggunakan model QA untuk menjawab pertanyaan
+    # Use the QA model to answer the question
     result = qa_pipeline({"question": question, "context": selected_chunks})
     
     return {
@@ -127,8 +121,28 @@ def get_answer(question: str):
         "context_used": selected_chunks
     }
 
-# Menjalankan server FastAPI jika file ini dijalankan langsung
-if __name__ == "__main__":
-    # Membaca port dari Vercel (atau default ke 8000)
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+# Streamlit App UI
+st.title("Question Answering with CSV Data")
+
+# Upload files section
+upload_files()
+
+# Input for asking a question
+question = st.text_input("Ask a question:")
+
+if question:
+    # Perform search and display results
+    results = search(question)
+    if results:
+        st.subheader("Relevant Chunks:")
+        for result in results:
+            st.write(f"**Title:** {result['title']}")
+            st.write(f"**Chunk:** {result['chunk'][:500]}...")  # Display the first 500 characters of the chunk
+
+        # Get the answer to the question
+        answer = get_answer(question)
+        if answer:
+            st.subheader("Answer:")
+            st.write(answer["answer"])
+            st.subheader("Context Used for Answer:")
+            st.write(answer["context_used"][:500])  # Display the first 500 characters of context
