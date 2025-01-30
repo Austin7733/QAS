@@ -4,5 +4,4 @@ faiss-cpu
 sentence-transformers
 transformers
 streamlit
-nltk
 torch
