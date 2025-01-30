@@ -1,10 +1,7 @@
-fastapi
-uvicorn
+streamlit
 pandas
-faiss-cpu
 numpy
+faiss
 sentence-transformers
 transformers
 nltk
-streamlit
-python-multipart
