@@ -2,88 +2,105 @@ import os
 import pandas as pd
 import numpy as np
 import faiss
-import streamlit as st
-import nltk
+import dask.dataframe as dd
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
-from multiprocessing import Pool, cpu_count
-
-# Download NLTK tokenizer
-nltk.download("punkt")
+from transformers import pipeline, AutoTokenizer
+import streamlit as st
+from joblib import Parallel, delayed
 
 # Model dan pipeline
-embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")  # Model lebih cepat
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
 
-def process_chunk(text):
-    """Tokenize and generate embeddings for a text chunk."""
-    sentences = nltk.sent_tokenize(text)
-    return sentences
+tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
-def batch_encode(chunks):
-    """Parallel embedding encoding."""
-    return embedding_model.encode(chunks, show_progress_bar=True, convert_to_numpy=True)
+def tokenize_sentences(text):
+    return tokenizer.tokenize(text)
 
-def preprocess_and_split_text(df, chunk_size=500):
-    """Optimized text preprocessing using chunking."""
-    df["abstract"] = df["abstract"].astype(str).str.replace('\n', ' ').str.replace('\r', '').str.strip()
-    df["chunks"] = df["abstract"].apply(process_chunk)
+# Fungsi untuk memproses dan membagi teks
+def preprocess_and_split_text(df):
+    df["abstract"] = df["abstract"].str.replace('\n', ' ').str.replace('\r', '').str.strip()
+    df["chunks"] = df["abstract"].apply(tokenize_sentences)
     return df
 
+# Fungsi untuk membuat embeddings dalam batch
+def batch_encode(chunks, batch_size=64):
+    embeddings = []
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        batch_embeddings = embedding_model.encode(batch, show_progress_bar=False)
+        embeddings.extend(batch_embeddings)
+    return np.array(embeddings)
+
+# Fungsi untuk membuat embeddings dan index FAISS
 def create_faiss_index(df_chunks):
-    """Batch process embeddings and build FAISS index."""
     all_chunks = [(row["title"], chunk) for _, row in df_chunks.iterrows() for chunk in row["chunks"]]
     df_chunks = pd.DataFrame(all_chunks, columns=["title", "chunk"])
     
-    # Parallel embeddings
-    with Pool(cpu_count()) as pool:
-        embeddings = pool.map(batch_encode, np.array_split(df_chunks["chunk"], cpu_count()))
-    embeddings = np.vstack(embeddings)
+    embeddings = batch_encode(df_chunks["chunk"].tolist())
     
-    # FAISS Index
-    index = faiss.IndexFlatL2(embeddings.shape[1])
+    d = embeddings.shape[1]
+    nlist = 100  # Parameter untuk IVFFlat
+    quantizer = faiss.IndexFlatL2(d)
+    index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_L2)
+    index.train(embeddings)
     index.add(embeddings)
+    
     return df_chunks, index
 
-# Streamlit UI
-st.title("Optimized Machine Learning Q&A")
+# Streamlit interface
+st.title("Apa yang ingin anda ketahui tentang Machine Learning?")
 
-uploaded_file = st.file_uploader("Upload CSV File", type=["csv"], accept_multiple_files=False)
+uploaded_file = st.file_uploader("Silahkan upload file csv!", type=["csv"], accept_multiple_files=False)
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file, chunksize=10000)
-    df = pd.concat(df)  # Merge chunks for processing
+    # Proses file CSV yang diupload
+    df = dd.read_csv(uploaded_file).compute()
     df_chunks = preprocess_and_split_text(df)
     df_chunks, index = create_faiss_index(df_chunks)
     
-    st.success("File processed successfully!")
+    st.success("File berhasil di upload.")
+
+    # Simpan df_chunks dan index menggunakan session state
     st.session_state.df_chunks = df_chunks
     st.session_state.index = index
 
-def search(question, top_k=5):
-    """Optimized search function using FAISS."""
+# Fungsi pencarian berdasarkan pertanyaan
+def search(question: str, top_k: int = 5):
     if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
-        st.error("Please upload a file first!")
+        st.error("Silahkan upload file csv dahulu!")
         return []
-    
+
+    df_chunks = st.session_state.df_chunks
+    index = st.session_state.index
+
     question_embedding = embedding_model.encode(question)
-    distances, indices = st.session_state.index.search(np.array([question_embedding]), top_k)
-    results = [{"title": st.session_state.df_chunks.iloc[idx]["title"], "chunk": st.session_state.df_chunks.iloc[idx]["chunk"]} for idx in indices[0]]
+    distances, indices = index.search(np.array([question_embedding]), top_k)
+
+    results = []
+    for idx in indices[0]:
+        result = {
+            "title": df_chunks.iloc[idx]["title"],
+            "chunk": df_chunks.iloc[idx]["chunk"]
+        }
+        results.append(result)
     return results
 
-def get_answer(question):
-    """Retrieve an answer from indexed chunks."""
+# Fungsi untuk mendapatkan jawaban
+def get_answer(question: str):
     if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
-        st.error("Please upload a file first!")
+        st.error("Silahkan upload file csv dahulu!")
         return {}
-    
+
     results = search(question, top_k=3)
     selected_chunks = " ".join([result["chunk"] for result in results])
+    
     result = qa_pipeline({"question": question, "context": selected_chunks})
     return {"answer": result["answer"], "context_used": selected_chunks}
 
-question = st.text_input("Ask a question:")
+# Form untuk input pertanyaan
+question = st.text_input("Tanyakan:")
 if question:
     answer = get_answer(question)
     if answer:
-        st.write(f"Answer: {answer['answer']}")
-        st.write(f"Context used: {answer['context_used']}")
+        st.write(f"Jawaban: {answer['answer']}")
+        st.write(f"Konteks: {answer['context_used']}")
