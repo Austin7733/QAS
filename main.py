@@ -6,6 +6,10 @@ from sentence_transformers import SentenceTransformer
 from transformers import pipeline, AutoTokenizer
 import streamlit as st
 from joblib import Parallel, delayed
+import nltk  # Pastikan untuk mengimpor nltk
+
+# Unduh data yang dibutuhkan oleh nltk
+nltk.download('punkt')
 
 # ========== LOAD MODELS ========== 
 embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")  
@@ -14,7 +18,7 @@ tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
 # ========== FUNGSI PEMROSESAN ========== 
 def tokenize_sentences(text):
-    return tokenizer.tokenize(text)
+    return nltk.word_tokenize(text)  # Menggunakan nltk untuk tokenisasi kalimat
 
 def preprocess_and_split_text(df):
     df["abstract"] = df["abstract"].astype(str).str.replace('\n', ' ').str.replace('\r', '').str.strip()
