@@ -4,5 +4,4 @@ numpy
 faiss-cpu
 sentence-transformers
 transformers
-joblib
 nltk
