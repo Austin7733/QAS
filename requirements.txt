@@ -1,7 +1,10 @@
 fastapi
-uvicorn[gunicorn]
+uvicorn
+pandas
+faiss-cpu
+numpy
 sentence-transformers
 transformers
-faiss-cpu
-pandas
 nltk
+streamlit
+python-multipart
