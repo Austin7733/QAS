@@ -10,7 +10,7 @@ from nltk.tokenize import word_tokenize
 import nltk
 
 # Download data tokenisasi NLTK
-nltk.download('punkt_tab')
+nltk.download('punkt')
 
 # ========== LOAD MODELS ==========
 embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")  
