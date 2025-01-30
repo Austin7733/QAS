@@ -10,15 +10,16 @@ import uvicorn
 from typing import List
 
 # Download NLTK tokenizer
-nltk.download("punkt_tab")
+nltk.download("punkt")
 
+# Inisialisasi FastAPI app
 app = FastAPI()
 
 # Load pre-trained models
 qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Global variables for FAISS index and dataframe
+# Global variables untuk FAISS index dan dataframe
 df_chunks = None
 index = None
 
@@ -126,7 +127,8 @@ def get_answer(question: str):
         "context_used": selected_chunks
     }
 
+# Menjalankan server FastAPI jika file ini dijalankan langsung
 if __name__ == "__main__":
-    # Membaca port dari Railway
+    # Membaca port dari Vercel (atau default ke 8000)
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
