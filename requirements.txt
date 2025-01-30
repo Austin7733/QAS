@@ -1,8 +1,8 @@
-streamlit
-transformers
-sentence-transformers
+fastapi
+uvicorn
+pandas
 faiss-cpu
 numpy
-pandas
-tqdm
 nltk
+sentence-transformers
+transformers
