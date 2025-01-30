@@ -7,9 +7,6 @@ from transformers import pipeline
 import streamlit as st
 import nltk
 
-# Judul Streamlit
-st.title("Selamat datang. Apa yang ingin ketahui tentang Machine Learning?")
-
 # Download NLTK tokenizer
 nltk.download("punkt")
 
@@ -37,16 +34,16 @@ def create_faiss_index(df_chunks):
     return df_chunks, index
 
 # Streamlit interface
-st.title("Question Answering with Uploaded CSV")
+st.title("Apa yang ingin anda ketahui tentang Machine Learning?")
 
-uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"], accept_multiple_files=False)
+uploaded_file = st.file_uploader("Silahkan upload file csv!", type=["csv"], accept_multiple_files=False)
 if uploaded_file is not None:
     # Proses file CSV yang diupload
     df = pd.read_csv(uploaded_file)
     df_chunks = preprocess_and_split_text(df)
     df_chunks, index = create_faiss_index(df_chunks)
     
-    st.success("File uploaded and processed successfully!")
+    st.success("File berhasil di upload.")
 
     # Simpan df_chunks dan index menggunakan session state
     st.session_state.df_chunks = df_chunks
@@ -55,7 +52,7 @@ if uploaded_file is not None:
 # Fungsi pencarian berdasarkan pertanyaan
 def search(question: str, top_k: int = 5):
     if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
-        st.error("No data available. Please upload a file first.")
+        st.error("Silahkan upload file csv dahulu!")
         return []
 
     df_chunks = st.session_state.df_chunks
@@ -76,7 +73,7 @@ def search(question: str, top_k: int = 5):
 # Fungsi untuk mendapatkan jawaban
 def get_answer(question: str):
     if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
-        st.error("No data available. Please upload a file first.")
+        st.error("Silahkan upload file csv dahulu!")
         return {}
 
     results = search(question, top_k=3)
@@ -86,9 +83,9 @@ def get_answer(question: str):
     return {"answer": result["answer"], "context_used": selected_chunks}
 
 # Form untuk input pertanyaan
-question = st.text_input("Ask a question:")
+question = st.text_input("Tanyakan:")
 if question:
     answer = get_answer(question)
     if answer:
-        st.write(f"Answer: {answer['answer']}")
-        st.write(f"Context used: {answer['context_used']}")
+        st.write(f"Jawaban: {answer['answer']}")
+        st.write(f"Konteks: {answer['context_used']}")
