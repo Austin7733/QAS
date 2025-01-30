@@ -7,7 +7,8 @@ from transformers import pipeline
 import streamlit as st
 import nltk
 
-st.tilte("Selamat datang. Apa yang ingin ketahui tentang Machine Learning?")
+# Judul Streamlit
+st.title("Selamat datang. Apa yang ingin ketahui tentang Machine Learning?")
 
 # Download NLTK tokenizer
 nltk.download("punkt")
@@ -40,17 +41,25 @@ st.title("Question Answering with Uploaded CSV")
 
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"], accept_multiple_files=False)
 if uploaded_file is not None:
+    # Proses file CSV yang diupload
     df = pd.read_csv(uploaded_file)
     df_chunks = preprocess_and_split_text(df)
     df_chunks, index = create_faiss_index(df_chunks)
     
     st.success("File uploaded and processed successfully!")
 
+    # Simpan df_chunks dan index menggunakan session state
+    st.session_state.df_chunks = df_chunks
+    st.session_state.index = index
+
 # Fungsi pencarian berdasarkan pertanyaan
 def search(question: str, top_k: int = 5):
-    if 'df_chunks' not in globals() or 'index' not in globals():
+    if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
         st.error("No data available. Please upload a file first.")
         return []
+
+    df_chunks = st.session_state.df_chunks
+    index = st.session_state.index
 
     question_embedding = embedding_model.encode(question)
     distances, indices = index.search(np.array([question_embedding]), top_k)
@@ -66,7 +75,7 @@ def search(question: str, top_k: int = 5):
 
 # Fungsi untuk mendapatkan jawaban
 def get_answer(question: str):
-    if 'df_chunks' not in globals() or 'index' not in globals():
+    if 'df_chunks' not in st.session_state or 'index' not in st.session_state:
         st.error("No data available. Please upload a file first.")
         return {}
 
