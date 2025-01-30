@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import numpy as np
 import faiss
-import dask.dataframe as dd
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline, AutoTokenizer
 import streamlit as st
@@ -18,7 +17,7 @@ def tokenize_sentences(text):
     return tokenizer.tokenize(text)
 
 def preprocess_and_split_text(df):
-    df["abstract"] = df["abstract"].str.replace('\n', ' ').str.replace('\r', '').str.strip()
+    df["abstract"] = df["abstract"].astype(str).str.replace('\n', ' ').str.replace('\r', '').str.strip()
     df["chunks"] = df["abstract"].apply(tokenize_sentences)
     return df
 
@@ -61,15 +60,14 @@ def create_faiss_index(df_chunks):
 st.title("Apa yang ingin Anda ketahui tentang Machine Learning?")
 
 uploaded_file = st.file_uploader("Silahkan upload file CSV!", type=["csv"])
+
 if uploaded_file:
     st.info("Memproses file, harap tunggu...")
     
-    df = dd.read_csv(uploaded_file, blocksize="25MB")  # Load dalam blok kecil
-    df_sample = df.sample(frac=0.1).compute()  # Hanya load 10% untuk tampilan awal
-
-    df_chunks = preprocess_and_split_text(df_sample)
-    index = load_faiss_index()
+    df = pd.read_csv(uploaded_file, low_memory=False)  # Menggunakan Pandas untuk membaca file
+    df_chunks = preprocess_and_split_text(df)
     
+    index = load_faiss_index()
     if index is None:
         df_chunks, index = create_faiss_index(df_chunks)
     
